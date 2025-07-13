@@ -16,8 +16,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 #%matplotlib inline
 
-
-
 # Cargar dataset 
 scrip_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,7 +37,7 @@ df['Label'] = df['Spam/Ham'].map(
 
 # Descargar recursos y preprocesamiento
 nltk.download('stopwords')
-nltk.download('punkt_tab'   , force=True)
+nltk.download('punkt_tab', force=True)
 stemmer = PorterStemmer()
 stop_words = set(stopwords.words("english"))
 
@@ -50,7 +48,7 @@ def preprocess(text):
     filtered = [stemmer.stem(w) for w in tokens if w not in stop_words]
     return filtered
 
-df['tokens'] = df['text'] .apply(preprocess)
+df['tokens'] = df['text'].apply(preprocess)
 
 #Crear vocavulario
 counter = Counter()
@@ -147,7 +145,7 @@ print("Test Score:{:.2f}%".format(acc*100))
 print(f"Test Accuracy: {acc:.4f}")
 
 cm = confusion_matrix(y_test, y_pred)
-labels = ["Ham", "Spam"]  # o ["No Spam", "Spam"]
+labels = ["Ham", "Spam"]  
 
 plt.figure(figsize=(6, 5))
 sns.heatmap(
@@ -163,51 +161,3 @@ plt.ylabel("Actual")
 plt.title("Confusion Matrix")
 plt.tight_layout()
 plt.show()
-
-def classify_message(model, message, vocab, sentence_len, device="cpu"):
-    """
-    Clasifica un mensaje como spam o no spam usando un modelo LSTM en PyTorch.
-    
-    Args:
-        model: modelo PyTorch entrenado
-        message: string del correo a analizar
-        vocab: diccionario {palabra: índice}
-        sentence_len: longitud máxima para padding
-        device: "cpu" o "cuda"
-
-    Returns:
-        None (imprime la predicción)
-    """
-    model.eval()
-
-    # Preprocesamiento del texto completo (no línea por línea)
-    text = re.sub("[^a-zA-Z]", " ", message)
-    text = text.lower()
-    tokens = word_tokenize(text)
-    tokens = [w for w in tokens if w not in stop_words]
-    
-    # Convertir a índices usando vocabulario
-    indexed = [vocab.get(w, 1) for w in tokens]  # 1 = <UNK>
-
-    # Padding manual con torch
-    if len(indexed) > sentence_len:
-        indexed = indexed[:sentence_len]
-    else:
-        indexed = [0] * (sentence_len - len(indexed)) + indexed
-
-    # Convertir a tensor y agregar dimensión batch
-    input_tensor = torch.tensor([indexed], dtype=torch.long).to(device)
-
-    # Realizar predicción
-    with torch.no_grad():
-        output = model(input_tensor)
-        prediction = torch.sigmoid(output).item()
-
-    # Clasificar
-    if prediction > 0.5:
-        print("✅ It is a **spam** message. (Confidence: {:.2f})".format(prediction))
-    else:
-        print("📩 It is **not spam**. (Confidence: {:.2f})".format(prediction))
-
-message = "Congratulations! You have won a free iPhone. Click here to claim now."
-classify_message(model, message, vocab, sentence_len=200)
