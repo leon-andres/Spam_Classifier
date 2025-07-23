@@ -13,8 +13,6 @@ from tqdm import tqdm
 from transformers import (
     BertForSequenceClassification,
     BertTokenizer,
-    Trainer,
-    TrainingArguments,
     get_scheduler,
 )
 
@@ -35,22 +33,24 @@ df = df[df["message_length"] < 5000]
 df["label"] = df["Spam/Ham"].map({"ham": 0, "spam": 1})
 df = df[["text", "label"]].dropna()
 # df.head()
+df_sample = df.sample(frac=0.2, random_state=42)
 
 # Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 
-# Train/test split
-train_texts, test_texts, train_labels, test_labels = train_test_split(
-    df["text"].tolist(),
-    df["label"].tolist(),
-    test_size=0.2,
-    random_state=seed,
-    stratify=df["label"],
+# Sample Train/test split
+train_texts_sample, test_texts_sample, train_labels_sample, test_labels_sample = (
+    train_test_split(
+        df_sample["text"].tolist(),
+        df_sample["label"].tolist(),
+        test_size=0.2,
+        random_state=seed,
+        stratify=df_sample["label"],
+    )
 )
-train_texts.head()
-df.info()
+df_sample.info()
 
 
 # %% ===============================
@@ -68,10 +68,13 @@ def tokenize_data(texts, labels, tokenizer, max_len=128):
     return encodings, torch.tensor(labels)
 
 
-train_encodings, train_labels_tensor = tokenize_data(
-    train_texts, train_labels, tokenizer
+# Tokenizacion muestra
+train_encodings_sample, train_labels_tensor_sample = tokenize_data(
+    train_texts_sample, train_labels_sample, tokenizer
 )
-test_encodings, test_labels_tensor = tokenize_data(test_texts, test_labels, tokenizer)
+test_encodings_sample, test_labels_tensor_sample = tokenize_data(
+    test_texts_sample, test_labels_sample, tokenizer
+)
 
 
 # %% ===============================
@@ -91,38 +94,42 @@ class SpamDataset(Dataset):
         }
 
 
-train_dataset = SpamDataset(train_encodings, train_labels_tensor)
-test_dataset = SpamDataset(test_encodings, test_labels_tensor)
+# Muestra
+train_dataset_sample = SpamDataset(train_encodings_sample, train_labels_tensor_sample)
+test_dataset_sample = SpamDataset(test_encodings_sample, test_labels_tensor_sample)
 
 # %%===============================
 # CARGAR MODELO
 # ===============================
 # model = BertForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=2)
-# model.to(device)
 
 # Modelo DistilBERT, es más pequeño y rápido de entrenar
-model = BertForSequenceClassification.from_pretrained("distilbert-base-uncased")
+model = BertForSequenceClassification.from_pretrained(
+    "distilbert-base-uncased", num_labels=2
+)
 model.to(device)
 
-# %%===============================
-# TRAINING SETUP
 # ===============================
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=16)
+# TRAINING
+# ===============================
+
+# %%
+# 1. Batch_size = 16, epochs = 2, learning rate = 5e-5
+##
+train_loader_sample_16 = DataLoader(train_dataset_sample, batch_size=16, shuffle=True)
+test_loader_sample_16 = DataLoader(test_dataset_sample, batch_size=16)
 
 optimizer = AdamW(model.parameters(), lr=5e-5, weight_decay=0.01)
-lr_scheduler = get_scheduler(
+
+lr_scheduler_1 = get_scheduler(
     name="linear",
     optimizer=optimizer,
     num_warmup_steps=0,
-    num_training_steps=len(train_loader) * 4,  # epochs=4
+    num_training_steps=len(train_loader_sample_16) * 2,  # epochs=2
 )
 
 
-# %%===============================
-# TRAINING LOOP
-# ===============================
-def train(model, train_loader, optimizer, scheduler, epochs=4):
+def train(model, train_loader, optimizer, scheduler, epochs=2):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
@@ -142,35 +149,6 @@ def train(model, train_loader, optimizer, scheduler, epochs=4):
         print(f"Epoch {epoch + 1} loss: {avg_loss:.4f}")
 
 
-train(model, train_loader, optimizer, lr_scheduler)
-
-# Alternativa más optimizada que el training loop anterior
-training_args = TrainingArguments(
-    output_dir="./results",
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=64,
-    num_train_epochs=2,
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    logging_dir="./logs",
-    load_best_model_at_end=True,
-    fp16=True,  # mixed precision
-)
-
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_dataset,
-    eval_dataset=test_dataset,
-    tokenizer=tokenizer,
-)
-
-trainer.train()
-
-
-# %%===============================
-# EVALUACION
-# ===============================
 def evaluate(model, test_loader):
     model.eval()
     predictions = []
@@ -188,15 +166,15 @@ def evaluate(model, test_loader):
     return np.array(predictions), np.array(true_labels)
 
 
-y_pred, y_true = evaluate(model, test_loader)
+# train(model, train_loader_sample_16, optimizer, lr_scheduler_1, epochs=2)
 
-# ===============================
-# METRICAS
-# ===============================
-print(classification_report(y_true, y_pred, target_names=["Ham", "Spam"]))
+y_pred_1, y_true_1 = evaluate(model, test_loader_sample_16)
+
+print(classification_report(y_true_1, y_pred_1, target_names=["Ham", "Spam"]))
+
 
 # Matriz de confusión
-cm = confusion_matrix(y_true, y_pred)
+cm = confusion_matrix(y_true_1, y_pred_1)
 plt.figure(figsize=(6, 4))
 sns.heatmap(
     cm,
@@ -213,14 +191,117 @@ plt.tight_layout()
 plt.savefig("bert_matriz_confusion.png")
 plt.show()
 
-# ===============================
-# Guardar modelo
-# ===============================
+
 output_dir = "./bert_spam_model"
 os.makedirs(output_dir, exist_ok=True)
-model.save_pretrained(output_dir)
+# model.save_pretrained(output_dir)
 tokenizer.save_pretrained(output_dir)
-print(f"Model saved to {output_dir}")
+
+# %%
+# 2. Batch_size = 32, epochs = 3, learning rate = 5e-5
+##
+
+train_loader_sample_32 = DataLoader(train_dataset_sample, batch_size=32, shuffle=True)
+test_loader_sample_32 = DataLoader(test_dataset_sample, batch_size=32)
+
+optimizer_2 = AdamW(model.parameters(), lr=5e-5, weight_decay=0.01)
+
+lr_scheduler_2 = get_scheduler(
+    name="linear",
+    optimizer=optimizer_2,
+    num_warmup_steps=0,
+    num_training_steps=len(train_loader_sample_32) * 3,  # epochs=2
+)
+
+train(model, train_loader_sample_32, optimizer_2, lr_scheduler_2, epochs=3)
+
+y_pred_2, y_true_2 = evaluate(model, test_loader_sample_32)
+
+print(classification_report(y_true_2, y_pred_2, target_names=["Ham", "Spam"]))
+
+
+# Matriz de confusión
+cm_2 = confusion_matrix(y_true_2, y_pred_2)
+plt.figure(figsize=(6, 4))
+sns.heatmap(
+    cm_2,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    xticklabels=["Ham", "Spam"],
+    yticklabels=["Ham", "Spam"],
+)
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.tight_layout()
+plt.savefig("bert_matriz_confusion.png")
+plt.show()
+
+# %%
+# 3. Batch_size = 32, epochs = 2, learning rate = 1e-4
+##
+train_loader_sample_32 = DataLoader(train_dataset_sample, batch_size=32, shuffle=True)
+test_loader_sample_32 = DataLoader(test_dataset_sample, batch_size=32)
+
+optimizer_3 = AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
+
+lr_scheduler_3 = get_scheduler(
+    name="linear",
+    optimizer=optimizer_3,
+    num_warmup_steps=0,
+    num_training_steps=len(train_loader_sample_32) * 2,  # epochs=2
+)
+
+# train(model, train_loader_sample_32, optimizer_3, lr_scheduler_3, epochs=2)
+
+y_pred_3, y_true_3 = evaluate(model, test_loader_sample_32)
+
+print(classification_report(y_true_3, y_pred_3, target_names=["Ham", "Spam"]))
+
+
+# Matriz de confusión
+cm_3 = confusion_matrix(y_true_3, y_pred_3)
+plt.figure(figsize=(6, 4))
+sns.heatmap(
+    cm_3,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    xticklabels=["Ham", "Spam"],
+    yticklabels=["Ham", "Spam"],
+)
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.tight_layout()
+plt.savefig("bert_matriz_confusion.png")
+plt.show()
+
+###########################
+## Datos completos
+###########################
+
+# Train/test split
+train_texts, test_texts, train_labels, test_labels = train_test_split(
+    df["text"].tolist(),
+    df["label"].tolist(),
+    test_size=0.2,
+    random_state=seed,
+    stratify=df["label"],
+)
+df.info()
+
+
+# Tokenizacion datos
+train_encodings, train_labels_tensor = tokenize_data(
+    train_texts, train_labels, tokenizer
+)
+test_encodings, test_labels_tensor = tokenize_data(test_texts, test_labels, tokenizer)
+
+# Datos completos
+train_dataset = SpamDataset(train_encodings, train_labels_tensor)
+test_dataset = SpamDataset(test_encodings, test_labels_tensor)
 
 
 # ===============================
