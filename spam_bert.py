@@ -201,6 +201,11 @@ tokenizer.save_pretrained(output_dir)
 # 2. Batch_size = 32, epochs = 3, learning rate = 5e-5
 ##
 
+model = BertForSequenceClassification.from_pretrained(
+    "distilbert-base-uncased", num_labels=2
+)
+model.to(device)
+
 train_loader_sample_32 = DataLoader(train_dataset_sample, batch_size=32, shuffle=True)
 test_loader_sample_32 = DataLoader(test_dataset_sample, batch_size=32)
 
@@ -218,6 +223,9 @@ train(model, train_loader_sample_32, optimizer_2, lr_scheduler_2, epochs=3)
 y_pred_2, y_true_2 = evaluate(model, test_loader_sample_32)
 
 print(classification_report(y_true_2, y_pred_2, target_names=["Ham", "Spam"]))
+
+# os.makedirs(output_dir, exist_ok=True)
+# model.save_pretrained(output_dir)
 
 
 # Matriz de confusión
@@ -238,9 +246,35 @@ plt.tight_layout()
 plt.savefig("bert_matriz_confusion.png")
 plt.show()
 
+# model.save_pretrained(output_dir)
+
+
+# ===============================
+# Función de predicción
+# ===============================
+def predict_spam(texts, model, tokenizer):
+    model.eval()
+    inputs = tokenizer(
+        texts, return_tensors="pt", truncation=True, padding=True, max_length=128
+    )
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    with torch.no_grad():
+        outputs = model(**inputs)
+    preds = torch.argmax(outputs.logits, axis=1)
+    return ["Ham" if p == 0 else "Spam" for p in preds]
+
+
+# Ejemplo
+print(predict_spam(["Win a free iPhone!", "Meeting at 10am."], model, tokenizer))
+
 # %%
 # 3. Batch_size = 32, epochs = 2, learning rate = 1e-4
 ##
+model = BertForSequenceClassification.from_pretrained(
+    "distilbert-base-uncased", num_labels=2
+)
+model.to(device)
+
 train_loader_sample_32 = DataLoader(train_dataset_sample, batch_size=32, shuffle=True)
 test_loader_sample_32 = DataLoader(test_dataset_sample, batch_size=32)
 
@@ -278,9 +312,78 @@ plt.tight_layout()
 plt.savefig("bert_matriz_confusion.png")
 plt.show()
 
+
+####
+## Congelando capas intermedias
+####
+
+# %%
+# 2. Batch_size = 32, epochs = 3, learning rate = 5e-5
+##
+
+model = BertForSequenceClassification.from_pretrained(
+    "distilbert-base-uncased", num_labels=2
+)
+model.to(device)
+
+train_loader_sample_32 = DataLoader(train_dataset_sample, batch_size=32, shuffle=True)
+test_loader_sample_32 = DataLoader(test_dataset_sample, batch_size=32)
+
+optimizer_2 = AdamW(model.parameters(), lr=5e-5, weight_decay=0.01)
+
+lr_scheduler_2 = get_scheduler(
+    name="linear",
+    optimizer=optimizer_2,
+    num_warmup_steps=0,
+    num_training_steps=len(train_loader_sample_32) * 3,  # epochs=2
+)
+
+# Se congelan las capas intermedias
+for param in model.bert.parameters():
+    param.requires_grad = False
+
+for param in model.classifier.parameters():
+    param.requires_grad = True
+
+# train(model, train_loader_sample_32, optimizer_2, lr_scheduler_2, epochs=3)
+
+y_pred_2, y_true_2 = evaluate(model, test_loader_sample_32)
+
+print(classification_report(y_true_2, y_pred_2, target_names=["Ham", "Spam"]))
+
+# os.makedirs(output_dir, exist_ok=True)
+# model.save_pretrained(output_dir)
+
+
+# Matriz de confusión
+cm_2 = confusion_matrix(y_true_2, y_pred_2)
+plt.figure(figsize=(6, 4))
+sns.heatmap(
+    cm_2,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    xticklabels=["Ham", "Spam"],
+    yticklabels=["Ham", "Spam"],
+)
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.tight_layout()
+plt.savefig("bert_matriz_confusion.png")
+plt.show()
+
+# model.save_pretrained(output_dir)
+
+
 ###########################
 ## Datos completos
 ###########################
+
+model = BertForSequenceClassification.from_pretrained(
+    "distilbert-base-uncased", num_labels=2
+)
+model.to(device)
 
 # Train/test split
 train_texts, test_texts, train_labels, test_labels = train_test_split(
@@ -303,21 +406,17 @@ test_encodings, test_labels_tensor = tokenize_data(test_texts, test_labels, toke
 train_dataset = SpamDataset(train_encodings, train_labels_tensor)
 test_dataset = SpamDataset(test_encodings, test_labels_tensor)
 
+train_loader_32 = DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader_32 = DataLoader(test_dataset, batch_size=32)
 
-# ===============================
-# Función de predicción
-# ===============================
-def predict_spam(texts, model, tokenizer):
-    model.eval()
-    inputs = tokenizer(
-        texts, return_tensors="pt", truncation=True, padding=True, max_length=128
-    )
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    with torch.no_grad():
-        outputs = model(**inputs)
-    preds = torch.argmax(outputs.logits, axis=1)
-    return ["Ham" if p == 0 else "Spam" for p in preds]
+optimizer_4 = AdamW(model.parameters(), lr=5e-5, weight_decay=0.01)
 
+lr_scheduler_4 = get_scheduler(
+    name="linear",
+    optimizer=optimizer_4,
+    num_warmup_steps=0,
+    num_training_steps=len(train_loader_32) * 3,  # epochs=2
+)
 
-# Ejemplo
-print(predict_spam(["Win a free iPhone!", "Meeting at 10am."]))
+## MUY LENTO
+# train(model, train_loader_32, optimizer_4, lr_scheduler_4, epochs=3)
